@@ -1,0 +1,296 @@
+---
+title: "League of Legends Winrate"
+author: "Marko Neskovic, Harshil Patel, and Jeffrey Qin"
+date: "5/18/2020"
+output: html_document
+---
+
+# Introduction
+
+League of Legends (also known as LoL) is a video game created by Riot Games and was released back in October 27, 2009. Since then, the game quickly gained popularity around the world and became one of the most popular games to play. In July of 2012, XFire released a report stating that LoL was the most played PC game in North America and Europe, logging over 1.3 billion hours played in total. Even to this day, with the increased competition in other video games, LoL is still at the top of most popular video games.
+
+LoL is a multiplayer online battle arena type game in a isometric three-dimensional perspective. Usually, teams of 5 face off against each other in games that last around 20-50 minutes. The main objective is to reach the enemy base and to destroy their nexus. Before teams can do that though, players must take down other objectives and kill each other to obtain more gold so that they become stronger over time. For more detail, check out their webpage: https://na.leagueoflegends.com/en-us/how-to-play/.
+
+There has always been debate on what “makes” the winning team. Some believe that more wards placed secures the win, while some others believe that more kills on the enemy team guarantees the win. Not to mention another group of people that believe the most minion kills (safest way to earn gold) is the key to success. We will analyze data obtained from many of these games to determine which factor is most important to getting the win, and whether one can predict the outcome of a league game based on statistics within the first 10 minutes.
+
+# Motivation
+
+As previously mentioned, league is the most popular game in the world currently, with millions of players aiming to play to win, at both the amateur and professional levels. As league players ourselves, this topic was particularly interesting because we find ourselves in the middle of this debate frequently. Whether playing simple ranked games at the amateur level, like us, or playing professionally in tournaments with million dollar prizes, it is always valuable to know what to focus on in game to get the best result in the end. That being said, there is still no definitive answer to the debate, with even professional players preaching a variety of different strategies. We chose this topic in hopes of settling the debate not only for ourselves, but for all players looking to take a more statistically-backed approach to winning that has yet to be explored.
+
+# 1. Data Preparation and Tidying
+
+Before we get started, we must import all the necessary libraries for this project. These allow us to use many crucial functions to analyze and display our data. More information on all these libraries can be found on https://www.rdocumentation.org/.
+
+```{r libs, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#Loads all necessary libraries 
+library("tidyverse")
+library("rvest")
+library("dplyr")
+library("ggplot2")
+library("broom")
+library("tree")
+library("rpart")
+library("rpart.plot")
+```
+
+We get our data from https://www.kaggle.com/bobbyscience/league-of-legends-diamond-ranked-games-10-min as a Comma-Separated Values (.csv) file. It is imported into a data frame using the read.csv function, as shown below.
+
+```{r loading}
+#Reads table from csv file
+league_df <- read.csv('league.csv')
+```
+This dataset contains data for 10,000 matches between teams that are highly ranked. To simplify the meanings for each attribute, I’ve explained them in some detail below. 
+If you are interested, here’s a handy guide that goes more in depth: https://boosteria.org/guides/league-legends-objectives-guide
+
+We can view the first few rows of our table using the head function:
+```{r viewing}
+#Displays first few rows of the table
+as_tibble(league_df)
+```
+
+There are two teams that are in this dataset, the blue team and the red team, and the blue is the one we wish the analyze, with the red attributes only serving to calculate differences.
+
+Here is an overview of the necessary attributes:
+
+**blueWins** - 1 if the blue team won the game, 0 if they lost
+
+**(blue/red)WardsPlaced** - wards are purchasable in-game, and they grant vision of the map at the cost of gold
+
+**(blue/red)TotalMinionsKilled** - number of minions the team has slain (minions award gold after being killed)
+
+**(blue/red)TotalJungleMinionsKilled** - number of minions that spawned in the jungle area that the team has slain (minions award gold after being killed)
+
+**(blue/red)Kills** - Number of kills target team has, the more kills means more gold (worth about 15 times more gold than a minion)
+
+While this data is already fairly tidy (no NA cells, well-named attributes, etc...), we can improve it by removing the columns which we won't be using, and keeping only those which contain data we wish to analyze.
+```{r tidying}
+#Keeps only the wins, kills, wards, and minion columns
+
+mut_league <- league_df[c("blueWins", "blueKills", "blueWardsPlaced", "redKills", "redWardsPlaced", "blueTotalMinionsKilled", "blueTotalJungleMinionsKilled", "redTotalMinionsKilled", "redTotalJungleMinionsKilled")]
+```
+
+# 2. Data Manipulation
+This data is good, but doesn't represent some of the things we need for analysis. R allows us to manipulate our data to fix this issue. The manipulations we must perform are as follows:
+
+* Combine the MinionsKilled and JungleMinionsKilled attributes for the blue and red teams to make one cs_total column which represents the total CreepScore (CS)
+* Filter out all entries where wards placed on either team is greater than 90, as this is an indicator of the team cheating/hacking, and is therefore not representative of a normal match
+* Create new columns representing the differences in kills, CS, and wards between the blue and red teams, as this allows us to represent the pace of the game. It doesn't matter about the total amount, but rather how much more you have than your opponent.
+
+First we calculate the total CS for each team:
+```{r manipulation1}
+#Combines regular minions and jungle minions to create a total CS column for both teams
+mut_league <- mut_league %>%
+  mutate(blue_cs_tot = blueTotalMinionsKilled + blueTotalJungleMinionsKilled, red_cs_tot = redTotalMinionsKilled + redTotalJungleMinionsKilled)
+```
+
+Next, we filter out the excess-warding games:
+```{r manipulation2}
+#Filters out games with wardPlacement over 90
+mut_league <- mut_league %>%
+  filter(blueWardsPlaced <= 90 & redWardsPlaced <= 90)
+```
+
+Then, we calculate the differences for each aspect:
+```{r manipulation3}
+#Makes new columns for differences
+mut_league <- mut_league %>%
+  mutate(kill_diff = blueKills - redKills, ward_diff = blueWardsPlaced - redWardsPlaced, cs_diff = blue_cs_tot - red_cs_tot)
+```
+
+Finally, since we will only be using the differences for winrate analysis, we can remove the unnecessary columns.
+```{r manipulation4}
+mut_league <- mut_league[c(1,12:14)]
+```
+
+Let's display some data now
+```{r disp}
+head(mut_league)
+```
+
+At first glance, all three may appear to contribute to a higher chance of winning. But, which is the most important? How defining is each of the three? With this data, can we predict the necessary kill difference, ward difference, and minion kill difference for a win? Let’s do some analysis on our freshly prepared data.
+
+# 3. Data Analysis & Visualization
+
+Our data is ready to be analyzed. Let's look at some of our data relationships with the naked eye, and see if we can draw some conclusions.
+
+First, let's make a plot showing the relationship between CS (minion kills) when the blue team loses, vs. when it wins.
+```{r cs_plot}
+#Plots CS difference in winning/losing situations
+mut_league %>%
+  ggplot(aes(group = blueWins, blueWins, y = cs_diff)) + geom_boxplot() +
+  labs(x = "Blue Loss(0) or Win(1)", y = "CS difference")
+```
+
+The boxplot shows that the median of minion kill difference is higher when blue team wins. This goes to show that blue team could have more minion kills but end up losing anyway, and vice versa. There are times when the blue team had less minion kills, but still came up with the win at the end. The main takeaway is that USUALLY the team with higher minion kills is more likely, but there exist some counterexamples. This is a good sign nonetheless.
+
+Let's do the same with our kill difference.
+```{r kill_plot}
+#Plots kill difference in winning/losing situations
+mut_league %>%
+  ggplot(aes(group = blueWins, x = blueWins, y = kill_diff)) + geom_boxplot() +
+  labs(x = "Blue Loss(0) or Win(1)", y = "Kill Difference")
+```
+
+Based on visual analysis, it seems that kill difference is a clear factor when it comes to winning or not. The median kill difference for wins is much higher than for losses, even more spread out than CS difference. If the Blue team is behind in kills, the game will likely go in the Red team’s favor and vice versa. Of course there are outliers, but that’s bound to happen.
+
+Lastly, let’s look at if ward difference plays a big role in determining the win. 
+```{r ward_plot}
+#Plots ward difference in winning/losing situations
+mut_league %>%
+  ggplot(aes(group = blueWins, x = blueWins, y = ward_diff)) + geom_boxplot() +
+  labs(x = "Blue Loss(0) or Win(1)", y = "Ward Placement Difference")
+```
+
+Contrary to the other two, it seems that ward placement doesn’t really make a difference. Both a winning blue team and a losing blue team have very similar ward differences, with everything from the median to the spread being almost exactly the same. Based on this, we would assume that wards do not contribute to the win.
+
+With the assumptions that both Kills and CS contribute heavily to the win, we can explore how these look when compared to each other as well as the win rate. We can do this by making a plot with CS as the x-axis, Kills as the y-axis, and wins as a third dimension: color.
+```{r cs_kil_plot}
+#Plots kill difference vs. CS difference in terms of the win
+mut_league %>%
+  ggplot(aes(x = cs_diff, y = kill_diff, color = as.factor(blueWins))) + geom_point() +
+  labs(x = "CS Difference", y = "Kill Difference", color = "Blue Wins")
+```
+
+This plot reinforces our belief that both CS and Kill difference contribute to the win, with most of the wins being concentrated where both CS difference and Kill difference are heavily positive. This plot also shows that more wins were achieved when CS was negative and Kill difference was positive than when CS difference was positive and kill difference was negative, indicating that kill difference may indeed me more important than CS difference.
+
+Since we assume that kills do heavily impact winrate, we can use that to our advantage, and compare that, warding, and winrate to get even more insight.
+```{r ward_kil_plot}
+#Plots kill difference vs. ward difference in terms of the win
+mut_league %>%
+  ggplot(aes(x = ward_diff, y = kill_diff, color = as.factor(blueWins))) + geom_point() +
+  labs(x = "Ward Difference", y = "Kill Difference", color = "Blue Wins")
+```
+
+As in the previous one, this plot reinforces our previous assumptions. The wins and losses seem to be evenly spread across the x-axis (warding difference), but heavily concentrated towards the top of the plot (higher kill difference). This tells us that warding is likely not a big contributor to wins, while kills are.
+
+Based on our visualizations and subsequent analyses, we expect kills and cs to be factors of winning, but warding not so much. If this is the case, we still do not know which between kills and cs is more important. Nothing is certain, so let's continue on and make some regression and tree-based models to solve this once and for all!
+
+# 4. Linear Regression, Hypothesis Testing, and Tree-Based Model
+
+To begin this phase of analysis, we want to look at the winrate with respect to each of the factors, and see if we can find a statistically-significant, linear relationship between them.
+
+The way we do this for each factor is by:
+
+1. Creating a data frame which is grouped by that factor and summarised with the mean wins (winrate) for each group
+2. Using the data frame to plot the relationship between that factor and winrate, making sure to include a regression line in the plot (more on this can be found at https://www.theanalysisfactor.com/linear-models-r-plotting-regression-lines/)
+3. Fitting a linear regression model with the winrate trained on the factor.
+
+We start by creating data frames for all three factors by taking the original mutated data frame, grouping it by that specific difference, and creating a new winrate column based on the winrate for that specific difference.
+```{r cs_win}
+#Creates data frame grouped by kill difference, with winrate in respect to the groups
+kill_win <- mut_league %>%
+  group_by(kill_diff) %>%
+  summarise(winrate = mean(blueWins))
+
+#Creates data frame grouped by cs difference, with winrate in respect to the groups
+cs_win <- mut_league %>%
+  group_by(cs_diff) %>%
+  summarise(winrate = mean(blueWins))
+
+#Creates data frame grouped by warding difference, with winrate in respect to the groups
+ward_win <- mut_league %>%
+  group_by(ward_diff) %>%
+  summarise(winrate = mean(blueWins))
+```
+
+Let's start with out first plot, which shows winrate with respect to kill difference.
+```{r plots1}
+kill_win %>%
+  ggplot(aes(x = kill_diff, y = winrate)) + geom_point() + labs(x = "Kill Difference (Blue - Red)", y = "Blue Winrate", title = "Kill Difference vs. Winrate") + geom_smooth(method = lm)
+```
+
+As we can see in the plot above, the winrate follows a clear upward trend as the kill difference increases. The linear-looking distribution of the points, combined with the heavily upward-sloping regression line, tells us that a bigger kill difference likely means a higher chance of winning.
+
+After making the plot, we reinforce this by fitting a regression model which we then tidy and display using broom tidy (Documentation at https://cran.r-project.org/web/packages/broom/vignettes/broom.html):
+```{r reg1}
+kill_fit <- lm(winrate~kill_diff, data=kill_win)%>%
+  tidy()
+kill_fit
+```
+
+As we can see, the p-value is incredibly small, certainly smaller than 0.05, so we reject the null hypothesis. This confirms that there is a statistically-significant relationship between kill difference and winrate, with each increase in kill difference increasing the winrate by around 4%, based on the estimate.
+
+Next we will generate the same plot for cs difference.
+```{r plots2}
+cs_win %>%
+  ggplot(aes(x = cs_diff, y = winrate)) + geom_point() + labs(x = "CS Difference (Blue - Red)", y = "Blue Winrate", title = "CS Difference vs. Winrate") + geom_smooth(method = lm)
+```
+
+Just as in the kill difference plot, the cs difference and winrate follow a pretty clear linear trend, which supports our previous assumption that winrate depends heavily on CS.
+
+We follow by fitting the respective linear regression model.
+```{r reg2}
+cs_fit <- lm(winrate~cs_diff, data=cs_win)%>%
+  tidy()
+cs_fit
+```
+
+Again, the p-value for this model is incredibly small (smaller than 0.05), so we reject the null hypothesis and there is a statistically significant relationship between cs difference and the winrate, specifically a 0.4% increase in winrate for each increase in the cs difference.
+
+Finally we want to plot the same for warding.
+```{r plots3}
+ward_win %>%
+  ggplot(aes(x = ward_diff, y = winrate)) + geom_point() + labs(x = "Ward Difference (Blue - Red)", y = "Blue Winrate", title = "Ward Difference vs. Winrate") + geom_smooth(method = lm)
+
+```
+
+Evidently, warding does not have as clear of a relationship. While the regression line is slightly upward sloping, the points are scattered all around the plot, and they dont follow a very clear relationship.
+
+Let's confirm by fitting our regression model.
+```{r reg3}
+ward_fit <- lm(winrate~ward_diff, data=ward_win)%>%
+  tidy()
+ward_fit
+```
+
+With a p-value of ~0.22, which is greater that 0.05, we are not able to reject the null hypothesis. This indicates that there is not a statistically significant relationship between the difference in ward placement and win rate when it comes to league games.
+
+So now we've found out which factors contribute significantly to winrate and which one doesn't, but what if we take this a step further by predicting what the match outcome will be based on these factors.
+
+The best way to do this is to use a tree-based model, specifically a classification tree, which you can learn more about at https://www.datacamp.com/community/tutorials/decision-trees-R. 
+
+We will make our classification tree using a seed to be able to reproduce the results, training 70% of the data and using the other 30% for validation, and storing them in their respective data frames.
+
+```{r tree1}
+#Sets seed to reproduce results
+set.seed(100)
+
+#Gets training and validation indeces
+ind <- sample(2, nrow(mut_league), replace=TRUE, prob=c(0.7, 0.3))
+
+#Separates data into training data and validation data
+trainData <- mut_league[ind==1,]
+validationData <- mut_league[ind==2,]
+```
+
+We will split the decision tree based on all three factors, with a low complexity (cp = 0.001), for better accuracy, and in case a there is even a slight correlation between a supposedly insignificant factor (like warding) and a blue win.
+```{r tree2}
+#Creates the tree
+tree1 <- rpart(blueWins~cs_diff + ward_diff + kill_diff, data = trainData, method = "class", control = rpart.control(cp = 0.001))
+```
+
+The tree is made, now let's take a look at it.
+```{r tree3}
+#Displays the tree
+prp(tree1)
+```
+
+As we can see, we have made a decision tree that will allow us to predict whether we win (1) or lose(0) based on these various factors. At this level of complexity, it allows for all the variables to be considered (including warding), which increases accuracy at the expense of efficiency.
+
+We can use the predict function to get the predictions, and take the mean of the predictions when compared to the whole validation data data frame to get the percentage of accuracy of our model.
+```{r tree4}
+prediction <- predict(tree1,validationData,type="class")
+accuracy <- mean(prediction==validationData$blueWins)
+accuracy
+```
+
+Congratulations, you've made a tree-based model that can predict LoL wins from kill difference, cs difference, and ward placement difference within the first 10 minutes of the game with around 73% accuracy!
+
+# 5. Conclusion
+
+It is important to know that League of Legends is not a one-dimensional game, and while some may preach that kills are the holy grail, or that cs will get you the dub, or even that ward vision is the most crucial, it takes analysis to get a definitive answer.
+
+Based on the analysis we've done on our dataset, we concluded through our linear regression models that kills and cs have a very statistically significant relationship with win rate, boosting win rate by 4% per kill and 0.4% per CS, respectively. They also tell us that as helpful as warding is, it does not have a statistically significant relationship with winrate. Ultimately, this means that while you shouldn't ignore warding, CS and kills are what wins games primarily, and while you should secure kills when you can because they are more important, CS can be equally as valuable in the long run.
+
+In addition, we see that it's more than possible to fairly accurately classify a game as a win or loss based on these factors because they are so significantly significantly linked to winrate, especially kills. We encourage others with similar passions in LoL and Data Science to play with this dataset, look at others, and potentially find more trends between these (as well as other) factors and getting that win.
