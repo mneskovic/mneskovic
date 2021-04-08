@@ -1,6 +1,6 @@
 ---
 title: "League of Legends Winrate"
-author: "Marko Neskovic, Harshil Patel, and Jeffrey Qin"
+author: "Marko Neskovic"
 date: "5/18/2020"
 output: html_document
 ---
